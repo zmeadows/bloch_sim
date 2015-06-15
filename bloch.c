@@ -76,7 +76,7 @@ struct bloch_sim {
 
 };
 
-static void initialize_bloch(struct bloch_sim *bs, realtype _p_0, realtype _p_1);
+static void initialize_bloch(struct bloch_sim *bs, realtype _p_0, realtype _p_1, int _num_cells);
 
 static int bloch_equations(realtype t, N_Vector M, N_Vector Mdot, void *user_data);
 
@@ -89,7 +89,7 @@ static int bloch_root(realtype t, N_Vector y, realtype *gout, void *user_data);
 // static void print_diagnostics(struct bloch_sim *bs);
 // static void print_frequencies(struct bloch_sim *bs);
 
-static void initialize_bloch(struct bloch_sim *bs, realtype _p_0, realtype _p_1)
+static void initialize_bloch(struct bloch_sim *bs, realtype _p_0, realtype _p_1, int _num_cells)
 {
     bs->w_0 = 2*M_PI*60e6;
     bs->B_0 = bs->w_0 / GAMMA_P;
@@ -102,7 +102,7 @@ static void initialize_bloch(struct bloch_sim *bs, realtype _p_0, realtype _p_1)
     bs->p_0 = _p_0;
     bs->p_1 = _p_1;
 
-    bs->num_cells = 3;
+    bs->num_cells = _num_cells;
     bs->cell_frequencies = malloc(bs->num_cells * sizeof(realtype));
     bs->cell_positions   = malloc(bs->num_cells * sizeof(realtype));
 
@@ -124,7 +124,7 @@ static void initialize_bloch(struct bloch_sim *bs, realtype _p_0, realtype _p_1)
     bs->pi2_duration           = -M_PI / (2*bs->w_1);
 
     bs->fid_samples_per_period = 45;
-    bs->fid_duration           = bs->T_2 * 6;
+    bs->fid_duration           = bs->T_2 * 4;
     bs->fid_num_samples        = bs->fid_samples_per_period * bs->fid_duration * bs->w_avg / (2*M_PI);
     bs->fid_sampling_rate      = bs->fid_num_samples / bs->fid_duration;
     bs->fid_sampling_interval  = bs->fid_duration / bs->fid_num_samples;
@@ -337,7 +337,7 @@ static int simulate_nmr_pulse(struct bloch_sim *bs)
                 M_FID_X += X(M,i) * cos(bs->w_avg * time_reached);
                 M_FID_X += Y(M,i) * sin(bs->w_avg * time_reached);
             }
-            bs->envelope[bs->num_zero_crossings] = M_FID_X;
+            bs->envelope[bs->num_zero_crossings] = M_FID_X / bs->num_cells;
             bs->num_zero_crossings++;
         }
     }
@@ -471,13 +471,17 @@ main (int argc, char **argv)
     realtype p_0 = 0.0;
     realtype p_1 = 0.0;
 
+    int num_cells = 9;
+
     int freq_write_flag = 0;
+    char *freq_file_str;
     int env_write_flag = 0;
+    char *env_file_str;
     // int param_write_flag;
 
 
 
-    while ((option = getopt(argc, argv,"l:q:h:e:p:")) != -1)
+    while ((option = getopt(argc, argv,"l:q:h:e:c:")) != -1)
     {
         switch (option)
         {
@@ -489,13 +493,18 @@ main (int argc, char **argv)
                 p_1 = strtod(optarg, NULL);
                 break;
 
-            case 'f' :
+            case 'h' :
                 freq_write_flag = 1;
+                freq_file_str = optarg;
                 break;
 
             case 'e' :
                 env_write_flag = 1;
+                env_file_str = optarg;
                 break;
+
+            case 'c':
+                num_cells = atoi(optarg);
 
             default:
                 //print_usage();
@@ -504,12 +513,12 @@ main (int argc, char **argv)
     }
 
 
-    initialize_bloch(b, p_0, p_1);
+    initialize_bloch(b, p_0, p_1, num_cells);
     simulate_nmr_pulse(b);
 
     if (freq_write_flag)
     {
-        FILE *freq_file = fopen(optarg, "w");
+        FILE *freq_file = fopen(freq_file_str, "w");
         if (freq_file == NULL) {
             fprintf(stderr, "ERROR: failed to open frequency output file!\n");
             exit(1);
@@ -520,7 +529,7 @@ main (int argc, char **argv)
 
     if (env_write_flag)
     {
-        FILE *env_file = fopen(optarg, "w");
+        FILE *env_file = fopen(env_file_str, "w");
         if (env_file == NULL) {
             fprintf(stderr, "ERROR: failed to open envelope output file!\n");
             exit(1);
