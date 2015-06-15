@@ -4,6 +4,7 @@
 #include <sundials/sundials_dense.h> /* definitions DlsMat DENSE_ELEM */
 #include <sundials/sundials_types.h> /* definition of type realtype */
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -71,6 +72,8 @@ struct bloch_sim {
     int estimated_num_zero_crossings;
     int num_zero_crossings;
     realtype *zero_crossings;
+    realtype *envelope;
+
 };
 
 static void initialize_bloch(struct bloch_sim *bs, realtype _p_0, realtype _p_1);
@@ -85,7 +88,6 @@ static int bloch_root(realtype t, N_Vector y, realtype *gout, void *user_data);
 
 // static void print_diagnostics(struct bloch_sim *bs);
 // static void print_frequencies(struct bloch_sim *bs);
-
 
 static void initialize_bloch(struct bloch_sim *bs, realtype _p_0, realtype _p_1)
 {
@@ -130,6 +132,7 @@ static void initialize_bloch(struct bloch_sim *bs, realtype _p_0, realtype _p_1)
     bs->num_zero_crossings = 0;
     bs->estimated_num_zero_crossings = (int)( bs->fid_duration / (M_PI / bs->w_avg));
     bs->zero_crossings = malloc( sizeof(realtype) * bs->estimated_num_zero_crossings * 2 );
+    bs->envelope = malloc( sizeof(realtype) * bs->estimated_num_zero_crossings * 2 );
 
     // {{{ DEBUG BLOCH PARAMS PRINT STATEMENTS
     if (DEBUG)
@@ -187,6 +190,8 @@ static void free_bloch(struct bloch_sim *bs)
 {
     free(bs->cell_positions);
     free(bs->cell_frequencies);
+    free(bs->zero_crossings);
+    free(bs->envelope);
     free(bs);
 }
 
@@ -316,7 +321,7 @@ static int simulate_nmr_pulse(struct bloch_sim *bs)
     flag = CVodeRootInit(cvode_mem, 1, bloch_root);
     if (check_flag(&flag, "CVodeRootInit", 1)) return 1;
 
-    realtype time_desired;
+    realtype time_desired, M_FID_X;
     while (time_reached < bs->fid_duration)
     {
         time_desired = time_reached + bs->fid_sampling_interval;
@@ -325,13 +330,22 @@ static int simulate_nmr_pulse(struct bloch_sim *bs)
         if (flag == CV_ROOT_RETURN)
         {
             bs->zero_crossings[bs->num_zero_crossings] = time_reached;
+
+            M_FID_X = 0.0;
+            for (i=0; i < bs->num_cells; i++)
+            {
+                M_FID_X += X(M,i) * cos(bs->w_avg * time_reached);
+                M_FID_X += Y(M,i) * sin(bs->w_avg * time_reached);
+            }
+            bs->envelope[bs->num_zero_crossings] = M_FID_X;
             bs->num_zero_crossings++;
         }
     }
 
     bs->zero_crossings = (realtype*) realloc(bs->zero_crossings, sizeof(realtype) * bs->num_zero_crossings);
-    if (!bs->zero_crossings) {
-        printf("ERROR: reallocating zero crossing array memory failed!\n");
+    bs->envelope = (realtype*) realloc(bs->envelope, sizeof(realtype) * bs->num_zero_crossings);
+    if (!bs->zero_crossings || !bs->envelope) {
+        printf("ERROR: reallocating zero crossing and/or envelope array memory failed!\n");
         exit(1);
     }
 
@@ -404,8 +418,49 @@ static int bloch_root(realtype t, N_Vector M, realtype *gout, void *user_data)
     return 0;
 }
 
-// {
-// }
+void
+write_frequencies(struct bloch_sim *bs, FILE *file)
+{
+    const int N = 1000;
+    assert(bs->num_zero_crossings > 0);
+
+    int i; realtype t, t1, t2, freq;
+    t = 0.0;
+    freq = 0.0;
+    for (i = 1; i < bs->num_zero_crossings; i++)
+    {
+        t1 = bs->zero_crossings[i-1];
+        t2 = bs->zero_crossings[i];
+        t += 0.5 * (t1 + t2);
+        freq += 0.5 / (t2 - t1);
+        if (i % N == 0)
+        {
+            fprintf(file, "%.12e %.12e\n", t / N, freq / N - bs->w_avg/(2*M_PI));
+            t = 0.0;
+            freq = 0.0;
+        }
+    }
+
+    fclose(file);
+}
+
+
+void
+write_envelope(struct bloch_sim *bs, FILE *file)
+{
+    assert(bs->num_zero_crossings > 0);
+
+    int i;
+    for (i = 0; i < bs->num_zero_crossings; i++)
+    {
+        if (i % 23 == 0)
+        {
+            fprintf(file, "%.12e %.12e\n", bs->zero_crossings[i], bs->envelope[i]);
+        }
+    }
+
+    fclose(file);
+}
 
 int
 main (int argc, char **argv)
@@ -417,9 +472,11 @@ main (int argc, char **argv)
     realtype p_0 = 0.0;
     realtype p_1 = 0.0;
 
-    FILE *output_file;
+    FILE *frequencies_file;
+    FILE *envelope_file;
+    // FILE *params_file;
 
-    while ((option = getopt(argc, argv,"l:q:o:")) != -1)
+    while ((option = getopt(argc, argv,"l:q:h:e:p:")) != -1)
     {
         switch (option)
         {
@@ -431,12 +488,21 @@ main (int argc, char **argv)
                 p_1 = strtod(optarg, NULL);
                 break;
 
-            case 'o' :
-                output_file = fopen(optarg, "w");
-                if (output_file == NULL) {
+            case 'h' :
+                frequencies_file = fopen(optarg, "w");
+                if (frequencies_file == NULL) {
                     fprintf(stderr, "ERROR: failed to open output file!\n");
                     exit(1);
                 }
+                break;
+
+            case 'e' :
+                envelope_file = fopen(optarg, "w");
+                if (envelope_file == NULL) {
+                    fprintf(stderr, "ERROR: failed to open output file!\n");
+                    exit(1);
+                }
+                break;
 
             default:
                 //print_usage();
@@ -445,12 +511,12 @@ main (int argc, char **argv)
     }
 
 
-    if (output_file != NULL)
-    {
-    }
-
-    initialize_bloch(b, 0.0, 1e-3);
+    initialize_bloch(b, p_0, p_1);
     simulate_nmr_pulse(b);
+
+    if (frequencies_file != NULL) { write_frequencies(b, frequencies_file); }
+    if (envelope_file != NULL) { write_envelope(b, envelope_file); }
+
     free_bloch(b);
     return 0;
 }
