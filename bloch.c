@@ -424,6 +424,8 @@ write_frequencies(struct bloch_sim *bs, FILE *file)
     const int N = 1000;
     assert(bs->num_zero_crossings > 0);
 
+    printf("writing frequencies...\n");
+
     int i; realtype t, t1, t2, freq;
     t = 0.0;
     freq = 0.0;
@@ -440,8 +442,6 @@ write_frequencies(struct bloch_sim *bs, FILE *file)
             freq = 0.0;
         }
     }
-
-    fclose(file);
 }
 
 
@@ -449,6 +449,7 @@ void
 write_envelope(struct bloch_sim *bs, FILE *file)
 {
     assert(bs->num_zero_crossings > 0);
+
 
     int i;
     for (i = 0; i < bs->num_zero_crossings; i++)
@@ -458,8 +459,6 @@ write_envelope(struct bloch_sim *bs, FILE *file)
             fprintf(file, "%.12e %.12e\n", bs->zero_crossings[i], bs->envelope[i]);
         }
     }
-
-    fclose(file);
 }
 
 int
@@ -472,9 +471,11 @@ main (int argc, char **argv)
     realtype p_0 = 0.0;
     realtype p_1 = 0.0;
 
-    FILE *frequencies_file;
-    FILE *envelope_file;
-    // FILE *params_file;
+    int freq_write_flag = 0;
+    int env_write_flag = 0;
+    // int param_write_flag;
+
+
 
     while ((option = getopt(argc, argv,"l:q:h:e:p:")) != -1)
     {
@@ -488,20 +489,12 @@ main (int argc, char **argv)
                 p_1 = strtod(optarg, NULL);
                 break;
 
-            case 'h' :
-                frequencies_file = fopen(optarg, "w");
-                if (frequencies_file == NULL) {
-                    fprintf(stderr, "ERROR: failed to open output file!\n");
-                    exit(1);
-                }
+            case 'f' :
+                freq_write_flag = 1;
                 break;
 
             case 'e' :
-                envelope_file = fopen(optarg, "w");
-                if (envelope_file == NULL) {
-                    fprintf(stderr, "ERROR: failed to open output file!\n");
-                    exit(1);
-                }
+                env_write_flag = 1;
                 break;
 
             default:
@@ -514,8 +507,27 @@ main (int argc, char **argv)
     initialize_bloch(b, p_0, p_1);
     simulate_nmr_pulse(b);
 
-    if (frequencies_file != NULL) { write_frequencies(b, frequencies_file); }
-    if (envelope_file != NULL) { write_envelope(b, envelope_file); }
+    if (freq_write_flag)
+    {
+        FILE *freq_file = fopen(optarg, "w");
+        if (freq_file == NULL) {
+            fprintf(stderr, "ERROR: failed to open frequency output file!\n");
+            exit(1);
+        }
+        write_frequencies(b, freq_file);
+        fclose(freq_file);
+    }
+
+    if (env_write_flag)
+    {
+        FILE *env_file = fopen(optarg, "w");
+        if (env_file == NULL) {
+            fprintf(stderr, "ERROR: failed to open envelope output file!\n");
+            exit(1);
+        }
+        write_envelope(b, env_file);
+        fclose(env_file);
+    }
 
     free_bloch(b);
     return 0;
